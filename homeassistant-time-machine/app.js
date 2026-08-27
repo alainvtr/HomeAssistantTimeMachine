@@ -1,3 +1,5 @@
+// bye Claude AI
+// contain Fix issue69 + Fix for the double display bug
 const express = require('express');
 const path = require('path');
 const fs = require('fs').promises;
@@ -503,28 +505,45 @@ async function getConfigFilePaths(configPath) {
     const configContent = await fs.readFile(configFile, 'utf-8');
     debugLog('[getConfigFilePaths] Found configuration.yaml, parsing...');
 
+    let currentSection = null;
     const lines = configContent.split('\n');
     for (const line of lines) {
-      const trimmedLine = line.trim();
+      // Strip comments
+      const commentIdx = line.indexOf('#');
+      const cleanLine = commentIdx !== -1 ? line.substring(0, commentIdx) : line;
+      const trimmedLine = cleanLine.trim();
+      if (!trimmedLine) continue;
 
-      // Match automation: !include filename.yaml
-      const autoIncludeMatch = trimmedLine.match(/^automation:\s*!include\s+(.+)$/);
-      if (autoIncludeMatch) {
-        const file = autoIncludeMatch[1].trim();
+      // Track current section by looking at unindented lines ending with :
+      const isUnindented = /^[a-zA-Z0-9_-]+:/.test(line);
+      if (isUnindented) {
+        if (trimmedLine.startsWith('automation:')) {
+          currentSection = 'automation';
+        } else if (trimmedLine.startsWith('script:')) {
+          currentSection = 'script';
+        } else {
+          currentSection = null;
+        }
+      }
+
+      // Check for inline inclusions
+      const inlineAutoInclude = trimmedLine.match(/^automation:\s*!include\s+(.+)$/);
+      if (inlineAutoInclude) {
+        const file = inlineAutoInclude[1].trim();
         automationPaths.push(path.join(configPath, file));
+        continue;
       }
 
-      // Match script: !include filename.yaml
-      const scriptIncludeMatch = trimmedLine.match(/^script:\s*!include\s+(.+)$/);
-      if (scriptIncludeMatch) {
-        const file = scriptIncludeMatch[1].trim();
+      const inlineScriptInclude = trimmedLine.match(/^script:\s*!include\s+(.+)$/);
+      if (inlineScriptInclude) {
+        const file = inlineScriptInclude[1].trim();
         scriptPaths.push(path.join(configPath, file));
+        continue;
       }
 
-      // Match automation: !include_dir_list dir_name or !include_dir_merge_list dir_name
-      const autoDirListMatch = trimmedLine.match(/^automation:\s*!include_dir_(?:merge_)?list\s+(.+)$/);
-      if (autoDirListMatch) {
-        const dir = autoDirListMatch[1].trim();
+      const inlineAutoDir = trimmedLine.match(/^automation:\s*!include_dir_(?:merge_)?list\s+(.+)$/);
+      if (inlineAutoDir) {
+        const dir = inlineAutoDir[1].trim();
         const fullDir = path.join(configPath, dir);
         automationDirs.push(fullDir);
         try {
@@ -535,12 +554,12 @@ async function getConfigFilePaths(configPath) {
         } catch (err) {
           debugLog(`[getConfigFilePaths] Could not read automation directory ${fullDir}:`, err.message);
         }
+        continue;
       }
 
-      // Match script: !include_dir_named dir_name or !include_dir_merge_named dir_name
-      const scriptDirNamedMatch = trimmedLine.match(/^script:\s*!include_dir_(?:merge_)?named\s+(.+)$/);
-      if (scriptDirNamedMatch) {
-        const dir = scriptDirNamedMatch[1].trim();
+      const inlineScriptDir = trimmedLine.match(/^script:\s*!include_dir_(?:merge_)?named\s+(.+)$/);
+      if (inlineScriptDir) {
+        const dir = inlineScriptDir[1].trim();
         const fullDir = path.join(configPath, dir);
         scriptDirs.push(fullDir);
         try {
@@ -550,6 +569,52 @@ async function getConfigFilePaths(configPath) {
           }
         } catch (err) {
           debugLog(`[getConfigFilePaths] Could not read script directory ${fullDir}:`, err.message);
+        }
+        continue;
+      }
+
+      // If we are inside a section, match generic inclusions
+      if (currentSection === 'automation') {
+        const includeMatch = trimmedLine.match(/!include\s+(.+)$/);
+        if (includeMatch) {
+          const file = includeMatch[1].trim();
+          automationPaths.push(path.join(configPath, file));
+        }
+
+        const dirMatch = trimmedLine.match(/!include_dir_(?:merge_)?list\s+(.+)$/);
+        if (dirMatch) {
+          const dir = dirMatch[1].trim();
+          const fullDir = path.join(configPath, dir);
+          automationDirs.push(fullDir);
+          try {
+            const files = await listYamlFilesRecursive(fullDir);
+            for (const file of files) {
+              automationPaths.push(path.join(fullDir, file));
+            }
+          } catch (err) {
+            debugLog(`[getConfigFilePaths] Could not read automation directory ${fullDir}:`, err.message);
+          }
+        }
+      } else if (currentSection === 'script') {
+        const includeMatch = trimmedLine.match(/!include\s+(.+)$/);
+        if (includeMatch) {
+          const file = includeMatch[1].trim();
+          scriptPaths.push(path.join(configPath, file));
+        }
+
+        const dirMatch = trimmedLine.match(/!include_dir_(?:merge_)?named\s+(.+)$/);
+        if (dirMatch) {
+          const dir = dirMatch[1].trim();
+          const fullDir = path.join(configPath, dir);
+          scriptDirs.push(fullDir);
+          try {
+            const files = await listYamlFilesRecursive(fullDir);
+            for (const file of files) {
+              scriptPaths.push(path.join(fullDir, file));
+            }
+          } catch (err) {
+            debugLog(`[getConfigFilePaths] Could not read script directory ${fullDir}:`, err.message);
+          }
         }
       }
     }
@@ -577,6 +642,43 @@ async function getConfigFilePaths(configPath) {
   return { automationPaths, scriptPaths, automationDirs, scriptDirs };
 }
 
+/**
+ * Best-effort file classification for LEGACY backups whose manifest predates
+ * the explicit automation_files/script_files fields (added for manifest-driven
+ * backups). The old fallback matched ANY "somedir/file.yaml" path in
+ * manifest.files.root for BOTH automations and scripts, so a single split
+ * config file (e.g. automat/lights.yaml) was returned to, and rendered in,
+ * both the Automations and the Scripts tab.
+ *
+ * This scopes the guess to directories the *current* live configuration.yaml
+ * actually designates for automations/scripts (via !include_dir_list /
+ * !include_dir_merge_list / !include_dir_named / !include_dir_merge_named),
+ * falling back to the plain automations.yaml/scripts.yaml file only.
+ *
+ * @param {Object} manifest - Parsed .backup_manifest.json
+ * @param {string} configPath - Live Home Assistant config directory
+ * @param {'automation'|'script'} kind
+ * @returns {Promise<string[]>} Relative paths (within the backup) to treat as this kind
+ */
+async function guessLegacyManifestFiles(manifest, configPath, kind) {
+  const filesRoot = (manifest.files && manifest.files.root) || [];
+  const standardFile = kind === 'automation' ? 'automations.yaml' : 'scripts.yaml';
+  const standardDirPrefix = kind === 'automation' ? 'automations/' : 'scripts/';
+
+  let knownDirNames = [];
+  try {
+    const { automationDirs, scriptDirs } = await getConfigFilePaths(configPath);
+    const dirs = kind === 'automation' ? automationDirs : scriptDirs;
+    knownDirNames = dirs.map(d => path.relative(configPath, d)).filter(Boolean);
+  } catch (err) {
+    debugLog('[guessLegacyManifestFiles] Could not re-derive split dirs from live config:', err.message);
+  }
+
+  return filesRoot.filter(f => {
+    if (f === standardFile || f.startsWith(standardDirPrefix)) return true;
+    return knownDirNames.some(dir => f === dir || f.startsWith(dir + '/'));
+  });
+}
 
 async function listYamlFilesRecursive(rootDir) {
   const results = [];
@@ -593,7 +695,9 @@ async function listYamlFilesRecursive(rootDir) {
     }
 
     for (const entry of entries) {
-      if (entry.name.startsWith('._')) {
+      // Skip hidden files/directories (starting with .)
+      // This skips .esphome build artifacts and macOS metadata
+      if (entry.name.startsWith('.')) {
         continue;
       }
 
@@ -1101,14 +1205,21 @@ async function getBackupDirs(dir, depth = 0) {
             // Not locked
           }
           results.push({ path: fullPath, folderName: name, mtime: stats.mtime, locked });
-        }
-
-        // Continue scanning deeper regardless to support nested structures like /year/month/backup
-        try {
-          const nestedResults = await getBackupDirs(fullPath, depth + 1);
-          results = results.concat(nestedResults);
-        } catch (err) {
-          // Skip directories we can't read
+        } else {
+          // Only keep descending into directories not already identified as a backup
+          // snapshot themselves, to support nested structures like /year/month/backup.
+          // A snapshot's own subfolders (e.g. `automat/`, `scripts/` for split
+          // automation/script configs backed up via !include_dir_*) are internal to
+          // that one snapshot, not sibling snapshots. Recursing into them too used to
+          // re-run the "contains yaml files" fallback heuristic below on those
+          // subfolders, which then misidentified them as extra backup folders in
+          // their own right - showing every snapshot twice (or more) in the web UI.
+          try {
+            const nestedResults = await getBackupDirs(fullPath, depth + 1);
+            results = results.concat(nestedResults);
+          } catch (err) {
+            // Skip directories we can't read
+          }
         }
       }
     }
@@ -1298,17 +1409,13 @@ async function checkAutomationsChanges(backupPath, configPath) {
       if (manifest.automation_files) {
         autoFiles = manifest.automation_files;
       } else if (manifest.files && manifest.files.root) {
-        autoFiles = manifest.files.root.filter(f =>
-          f === 'automations.yaml' ||
-          f.startsWith('automations/') ||
-          f.match(/^[^/]+\/.*\.ya?ml$/)
-        );
+        autoFiles = await guessLegacyManifestFiles(manifest, configPath, 'automation');
       }
 
       if (autoFiles) {
         for (const file of autoFiles) {
           try {
-            const filePath = path.join(backupPath, file);
+            const filePath = await resolveFileInBackupChain(backupPath, file);
             const fileData = await loadYamlWithCache(filePath);
             if (Array.isArray(fileData)) {
               backupArray = backupArray.concat(fileData);
@@ -1370,17 +1477,13 @@ async function checkScriptsChanges(backupPath, configPath) {
       if (manifest.script_files) {
         scriptFiles = manifest.script_files;
       } else if (manifest.files && manifest.files.root) {
-        scriptFiles = manifest.files.root.filter(f =>
-          f === 'scripts.yaml' ||
-          f.startsWith('scripts/') ||
-          f.match(/^[^/]+\/.*\.ya?ml$/)
-        );
+        scriptFiles = await guessLegacyManifestFiles(manifest, configPath, 'script');
       }
 
       if (scriptFiles) {
         for (const file of scriptFiles) {
           try {
-            const filePath = path.join(backupPath, file);
+            const filePath = await resolveFileInBackupChain(backupPath, file);
             const fileData = await loadYamlWithCache(filePath);
             if (fileData && typeof fileData === 'object' && !Array.isArray(fileData)) {
               Object.assign(backupScripts, fileData);
@@ -1533,7 +1636,8 @@ async function checkPackagesChanges(backupPath, configPath) {
 // Get backup automations (supports split configs)
 app.post('/api/get-backup-automations', async (req, res) => {
   try {
-    const { backupPath } = req.body;
+    const { backupPath, liveConfigPath } = req.body;
+    const configPath = liveConfigPath || (await getAddonOptions()).liveConfigPath || '/config';
     let allAutomations = [];
 
     // Check manifest for split config files
@@ -1546,17 +1650,13 @@ app.post('/api/get-backup-automations', async (req, res) => {
       if (manifest.automation_files) {
         autoFiles = manifest.automation_files;
       } else if (manifest.files && manifest.files.root) {
-        autoFiles = manifest.files.root.filter(f =>
-          f === 'automations.yaml' ||
-          f.startsWith('automations/') ||
-          f.match(/^[^/]+\/.*\.ya?ml$/) // e.g., "auto_dir/lights.yaml"
-        );
+        autoFiles = await guessLegacyManifestFiles(manifest, configPath, 'automation');
       }
 
       if (autoFiles) {
         for (const file of autoFiles) {
           try {
-            const filePath = path.join(backupPath, file);
+            const filePath = await resolveFileInBackupChain(backupPath, file);
             const fileData = await loadYamlWithCache(filePath);
             if (Array.isArray(fileData)) {
               allAutomations = allAutomations.concat(fileData);
@@ -1597,7 +1697,8 @@ app.post('/api/get-backup-automations', async (req, res) => {
 // Get backup scripts (supports split configs)
 app.post('/api/get-backup-scripts', async (req, res) => {
   try {
-    const { backupPath } = req.body;
+    const { backupPath, liveConfigPath } = req.body;
+    const configPath = liveConfigPath || (await getAddonOptions()).liveConfigPath || '/config';
     let allScripts = [];
 
     // Helper function to process script data
@@ -1623,17 +1724,13 @@ app.post('/api/get-backup-scripts', async (req, res) => {
       if (manifest.script_files) {
         scriptFiles = manifest.script_files;
       } else if (manifest.files && manifest.files.root) {
-        scriptFiles = manifest.files.root.filter(f =>
-          f === 'scripts.yaml' ||
-          f.startsWith('scripts/') ||
-          f.match(/^[^/]+\/.*\.ya?ml$/) // e.g., "script_dir/utilities.yaml"
-        );
+        scriptFiles = await guessLegacyManifestFiles(manifest, configPath, 'script');
       }
 
       if (scriptFiles) {
         for (const file of scriptFiles) {
           try {
-            const filePath = path.join(backupPath, file);
+            const filePath = await resolveFileInBackupChain(backupPath, file);
             const fileData = await loadYamlWithCache(filePath);
             allScripts = allScripts.concat(processScriptData(fileData));
           } catch (err) { /* File not found, skip */ }
@@ -1702,10 +1799,37 @@ app.post('/api/get-live-items', async (req, res) => {
     }
 
     const liveItems = {};
-    itemIdentifiers.forEach(identifier => {
-      const item = allItems.find(i => (i.id === identifier || i.alias === identifier));
-      if (item) {
-        liveItems[identifier] = item;
+    const usedIndices = new Set();
+
+    (itemIdentifiers || []).forEach(itemReq => {
+      let descriptor = typeof itemReq === 'object' && itemReq !== null
+        ? itemReq
+        : { _uid: itemReq, id: itemReq, alias: itemReq };
+
+      const key = descriptor._uid || descriptor.id || descriptor.alias;
+      if (!key) return;
+
+      // 1. Try matching by id
+      let matchIdx = -1;
+      if (descriptor.id) {
+        matchIdx = allItems.findIndex((i, idx) => !usedIndices.has(idx) && i.id === descriptor.id);
+      }
+
+      // 2. Try matching by alias
+      if (matchIdx === -1 && descriptor.alias) {
+        matchIdx = allItems.findIndex((i, idx) => !usedIndices.has(idx) && i.alias === descriptor.alias);
+      }
+
+      // 3. Fallback: match by position index
+      if (matchIdx === -1 && typeof descriptor.index === 'number' && descriptor.index < allItems.length) {
+        if (!usedIndices.has(descriptor.index)) {
+          matchIdx = descriptor.index;
+        }
+      }
+
+      if (matchIdx !== -1) {
+        usedIndices.add(matchIdx);
+        liveItems[key] = allItems[matchIdx];
       }
     });
 
@@ -1886,17 +2010,13 @@ app.post('/api/restore-automation', async (req, res) => {
       if (manifest.automation_files) {
         autoFiles = manifest.automation_files;
       } else if (manifest.files && manifest.files.root) {
-        autoFiles = manifest.files.root.filter(f =>
-          f === 'automations.yaml' ||
-          f.startsWith('automations/') ||
-          f.match(/^[^/]+\/.*\.ya?ml$/)
-        );
+        autoFiles = await guessLegacyManifestFiles(manifest, configPath, 'automation');
       }
 
       if (autoFiles) {
         for (const file of autoFiles) {
           try {
-            const potentialBackupPath = path.join(backupPath, file);
+            const potentialBackupPath = await resolveFileInBackupChain(backupPath, file);
             const data = await loadYamlWithCache(potentialBackupPath);
             if (Array.isArray(data) && data.some(a => a.id === automationIdentifier || a.alias === automationIdentifier)) {
               relativeFilePath = file;
@@ -2004,17 +2124,13 @@ app.post('/api/restore-script', async (req, res) => {
       if (manifest.script_files) {
         scriptFiles = manifest.script_files;
       } else if (manifest.files && manifest.files.root) {
-        scriptFiles = manifest.files.root.filter(f =>
-          f === 'scripts.yaml' ||
-          f.startsWith('scripts/') ||
-          f.match(/^[^/]+\/.*\.ya?ml$/)
-        );
+        scriptFiles = await guessLegacyManifestFiles(manifest, configPath, 'script');
       }
 
       if (scriptFiles) {
         for (const file of scriptFiles) {
           try {
-            const potentialBackupPath = path.join(backupPath, file);
+            const potentialBackupPath = await resolveFileInBackupChain(backupPath, file);
             const data = await loadYamlWithCache(potentialBackupPath);
             if (data && typeof data === 'object' && !Array.isArray(data)) {
               if (data[scriptIdentifier] || Object.values(data).some(s => s.alias === scriptIdentifier)) {
@@ -2380,6 +2496,21 @@ app.post('/api/validate-path', async (req, res) => {
       return res.json({ errorCode: 'directory_not_found' });
     }
 
+    if (type === 'backup') {
+      try {
+        const options = await getAddonOptions();
+        if (options.mode === 'addon') {
+          const allowedRoots = ['/backup', '/media', '/share', '/ssl', '/config', '/addons'];
+          const isAllowed = allowedRoots.some(root => requestedPath === root || requestedPath.startsWith(root + '/'));
+          if (!isAllowed) {
+            return res.json({ errorCode: 'invalid_addon_backup_path', path: requestedPath });
+          }
+        }
+      } catch (err) {
+        // Fallback: proceed to fs check
+      }
+    }
+
     try {
       const stats = await fs.stat(requestedPath);
       if (!stats.isDirectory()) {
@@ -2527,10 +2658,46 @@ async function resolveFileInBackupChain(targetBackupPath, relativeFilePath) {
   }
 }
 
+// Resolves backup root path, converting relative mount names (e.g. 'HA_TM_NAS') to absolute Supervisor/system paths
+function resolveBackupRootPath(backupFolderPath) {
+  if (!backupFolderPath || typeof backupFolderPath !== 'string' || backupFolderPath.trim() === '') {
+    return '/media/timemachine';
+  }
+  const trimmed = backupFolderPath.trim();
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  // Check Home Assistant Supervisor network mounts path (/data/mounts/<name>)
+  const supervisorMountPath = path.join('/data/mounts', trimmed);
+  try {
+    if (fs.existsSync(supervisorMountPath)) {
+      return supervisorMountPath;
+    }
+  } catch (e) {}
+
+  // Check /share/<name> and /media/<name>
+  const sharePath = path.join('/share', trimmed);
+  try {
+    if (fs.existsSync(sharePath)) {
+      return sharePath;
+    }
+  } catch (e) {}
+
+  const mediaPath = path.join('/media', trimmed);
+  try {
+    if (fs.existsSync(mediaPath)) {
+      return mediaPath;
+    }
+  } catch (e) {}
+
+  // Default to Supervisor network mount path for non-absolute folder names
+  return supervisorMountPath;
+}
+
 // Reusable backup function
 async function performBackup(liveConfigPath, backupFolderPath, source = 'manual', maxBackupsEnabled = false, maxBackupsCount = 100, timezone = null, smartBackupEnabled = false) {
   const configPath = liveConfigPath || '/config';
-  const backupRoot = backupFolderPath || '/media/timemachine';
+  const backupRoot = resolveBackupRootPath(backupFolderPath);
 
   LAST_BACKUP_STATE = {
     status: 'in_progress',
@@ -2663,6 +2830,9 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
     const destPath = path.join(backupPath, file);
 
     try {
+      // Always add to manifest
+      manifest.files.root.push(file);
+
       // Smart backup mode: only copy if file has changed
       if (smartBackupEnabled && allBackupPaths.length > 0) {
         const changed = await hasFileChanged(sourcePath, allBackupPaths, file);
@@ -2673,7 +2843,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
       }
 
       await fs.copyFile(sourcePath, destPath);
-      manifest.files.root.push(file); // Only add to manifest if file was actually copied
       copiedYamlCount++;
     } catch (err) {
       console.error(`[backup-${source}] Error copying ${file}:`, err.message);
@@ -2694,6 +2863,10 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
   let copiedSplitCount = 0;
   let skippedSplitCount = 0;
 
+  // Relative paths already handled by the top-level directory copy below, so the
+  // "individual split files" pass further down doesn't redundantly re-copy them.
+  const handledSplitRelativePaths = new Set();
+
   for (const dirPath of splitDirs) {
     try {
       const dirName = path.relative(configPath, dirPath);
@@ -2711,6 +2884,10 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
           const relativePath = path.join(dirName, file);
 
           try {
+            // Always add to manifest
+            manifest.files.root.push(relativePath);
+            handledSplitRelativePaths.add(relativePath);
+
             // Smart backup mode: only copy if file has changed
             if (smartBackupEnabled && allBackupPaths.length > 0) {
               const changed = await hasFileChanged(srcFile, allBackupPaths, relativePath);
@@ -2721,7 +2898,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
             }
 
             await fs.copyFile(srcFile, destFile);
-            manifest.files.root.push(relativePath);
             copiedSplitCount++;
           } catch (err) {
             console.error(`[backup-${source}] Error copying split config ${relativePath}:`, err.message);
@@ -2740,11 +2916,14 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
   }
 
   // Backup individual split config files (!include path/to/file.yaml)
-  // These are specific files detected in configuration.yaml that might be in subdirectories
+  // These are specific files detected in configuration.yaml that might be in subdirectories.
+  // Files already copied by the top-level directory pass above are excluded here to avoid
+  // redundant copies (nested files inside those same directories still need this pass, since
+  // the directory pass above only reads its directory non-recursively).
   const individuaSplitFiles = [...new Set([...automationPaths, ...scriptPaths])]
     .filter(f => {
       const rel = path.relative(configPath, f);
-      return rel !== 'automations.yaml' && rel !== 'scripts.yaml' && !rel.startsWith('..');
+      return rel !== 'automations.yaml' && rel !== 'scripts.yaml' && !rel.startsWith('..') && !handledSplitRelativePaths.has(rel);
     });
 
   let copiedIndividualCount = 0;
@@ -2755,6 +2934,9 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
     const destFile = path.join(backupPath, relativePath);
 
     try {
+      // Always add to manifest
+      manifest.files.root.push(relativePath);
+
       // Smart backup mode: only copy if file has changed
       if (smartBackupEnabled && allBackupPaths.length > 0) {
         const changed = await hasFileChanged(srcFile, allBackupPaths, relativePath);
@@ -2768,7 +2950,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
       await fs.mkdir(path.dirname(destFile), { recursive: true });
 
       await fs.copyFile(srcFile, destFile);
-      manifest.files.root.push(relativePath);
       copiedIndividualCount++;
     } catch (err) {
       if (err.code !== 'ENOENT') {
@@ -2797,6 +2978,9 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
       const sourcePath = path.join(storagePath, file);
       const destPath = path.join(backupStoragePath, file);
       try {
+        // Always add to manifest
+        manifest.files.storage.push(file);
+
         // Smart backup mode: only copy if file has changed
         if (smartBackupEnabled && allBackupPaths.length > 0) {
           const changed = await hasFileChanged(sourcePath, allBackupPaths, path.join('.storage', file));
@@ -2813,7 +2997,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
         }
 
         await fs.copyFile(sourcePath, destPath);
-        manifest.files.storage.push(file); // Only add to manifest if file was actually copied
         copiedLovelaceCount++;
       } catch (err) {
         if (err.code !== 'ENOENT') {
@@ -2845,6 +3028,9 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
         const sourcePath = path.join(esphomePath, relativePath);
         const destPath = path.join(backupEsphomePath, relativePath);
         try {
+          // Always add to manifest
+          manifest.files.esphome.push(relativePath);
+
           // Smart backup mode: only copy if file has changed
           if (smartBackupEnabled && allBackupPaths.length > 0) {
             const changed = await hasFileChanged(sourcePath, allBackupPaths, path.join('esphome', relativePath));
@@ -2856,7 +3042,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
 
           await fs.mkdir(path.dirname(destPath), { recursive: true });
           await fs.copyFile(sourcePath, destPath);
-          manifest.files.esphome.push(relativePath); // Only add to manifest if file was actually copied
           copiedEsphomeCount++;
         } catch (err) {
           if (err.code !== 'ENOENT') {
@@ -2884,6 +3069,9 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
         const sourcePath = path.join(packagesPath, relativePath);
         const destPath = path.join(backupPackagesPath, relativePath);
         try {
+          // Always add to manifest
+          manifest.files.packages.push(relativePath);
+
           // Smart backup mode: only copy if file has changed
           if (smartBackupEnabled && allBackupPaths.length > 0) {
             const changed = await hasFileChanged(sourcePath, allBackupPaths, path.join('packages', relativePath));
@@ -2895,7 +3083,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
 
           await fs.mkdir(path.dirname(destPath), { recursive: true });
           await fs.copyFile(sourcePath, destPath);
-          manifest.files.packages.push(relativePath); // Only add to manifest if file was actually copied
           copiedPackagesCount++;
         } catch (err) {
           if (err.code !== 'ENOENT') {
@@ -2911,10 +3098,18 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
     console.log(`[backup-${source}] Skipping Packages backups (feature disabled).`);
   }
 
+  // Dedupe manifest files
+  manifest.files.root = [...new Set(manifest.files.root)];
+  manifest.files.storage = [...new Set(manifest.files.storage)];
+  manifest.files.esphome = [...new Set(manifest.files.esphome)];
+  manifest.files.packages = [...new Set(manifest.files.packages)];
+  manifest.automation_files = [...new Set(manifest.automation_files)];
+  manifest.script_files = [...new Set(manifest.script_files)];
+
   // In smart backup mode, check if any files were actually copied
   // If not, delete the empty backup folder and return early
   if (smartBackupEnabled && allBackupPaths.length > 0) {
-    const totalCopied = copiedYamlCount + copiedLovelaceCount + copiedEsphomeCount + copiedPackagesCount;
+    const totalCopied = copiedYamlCount + copiedSplitCount + copiedIndividualCount + copiedLovelaceCount + copiedEsphomeCount + copiedPackagesCount;
     if (totalCopied === 0) {
       console.log(`[backup-${source}] No files changed since last backup. Removing empty backup folder.`);
       try {
@@ -3442,7 +3637,7 @@ app.post('/api/restore-packages-file', async (req, res) => {
 app.get('/api/health', async (req, res) => {
   try {
     const options = await getAddonOptions();
-    const backupRoot = options.backupFolderPath || '/media/timemachine';
+    const backupRoot = resolveBackupRootPath(options.backupFolderPath);
     let allBackups = [];
     try {
       allBackups = await getAllBackupPaths(backupRoot);
