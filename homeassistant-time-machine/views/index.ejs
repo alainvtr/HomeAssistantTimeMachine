@@ -2199,8 +2199,10 @@
         // Update title and clear subtitle (no backup selected yet)
         document.getElementById('itemsTitle').textContent = getStyledText(`ui.buttons.${newMode}`);
         document.getElementById('itemsSubtitle').textContent = getStyledText('ui.itemsList.noBackupSelected');
-        // Note: Don't clear itemsList here - leave existing content visible until new content loads
-        // The list will be updated when user selects a backup from the newly loaded list
+        // Clear the items list too: currentBackupPath was just reset to null above, so
+        // applyFilters() will render the correct "select a backup" placeholder for the
+        // new mode instead of leaving the previous mode's items visible on screen.
+        applyFilters();
       });
     });
 
