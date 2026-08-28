@@ -1,5 +1,3 @@
-// bye Claude AI
-// contain Fix issue69 + Fix for the double display bug
 const express = require('express');
 const path = require('path');
 const fs = require('fs').promises;
@@ -1261,12 +1259,30 @@ app.post('/api/scan-backups', async (req, res) => {
 
           switch (mode) {
             case 'automations':
-              // Check if automations.yaml is in root files
-              hasRelevantFiles = manifest.files?.root?.includes('automations.yaml') ?? false;
+              // Check whether any of this backup's automation file(s) - which may be
+              // automations.yaml, or one/more files under a split config directory like
+              // automat/ for !include_dir_list/!include_dir_merge_list setups - were
+              // actually part of this backup. Checking only for the literal
+              // "automations.yaml" name (as before) meant every smart-backup snapshot of
+              // a split automations config was silently hidden from the Automations tab,
+              // even though its automation files were backed up correctly.
+              if (Array.isArray(manifest.automation_files)) {
+                const rootFiles = manifest.files?.root || [];
+                hasRelevantFiles = manifest.automation_files.some(f => rootFiles.includes(f));
+              } else {
+                // Very old manifest without automation_files: fall back to the old check.
+                hasRelevantFiles = manifest.files?.root?.includes('automations.yaml') ?? false;
+              }
               break;
             case 'scripts':
-              // Check if scripts.yaml is in root files
-              hasRelevantFiles = manifest.files?.root?.includes('scripts.yaml') ?? false;
+              // Same reasoning as 'automations' above, for split script directories
+              // (!include_dir_named/!include_dir_merge_named, e.g. scripts/).
+              if (Array.isArray(manifest.script_files)) {
+                const rootFiles = manifest.files?.root || [];
+                hasRelevantFiles = manifest.script_files.some(f => rootFiles.includes(f));
+              } else {
+                hasRelevantFiles = manifest.files?.root?.includes('scripts.yaml') ?? false;
+              }
               break;
             case 'lovelace':
               // Check if any lovelace files are in storage
