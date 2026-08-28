@@ -85,7 +85,7 @@ window.STRINGS = {
       en: "Packages file restored and Home Assistant reloaded!",
       es: "¡Archivo de paquetes restaurado y Home Assistant recargado!",
       de: "Paketdatei wiederhergestellt und Home Assistant neugeladen!",
-      fr: "Fichier de paquets restauré et Home Assistant rechargé !",
+      fr: "Fichier packages restauré et Home Assistant rechargé !",
       nl: "Pakkettenbestand hersteld en Home Assistant herladen!",
       it: "File pacchetti ripristinato e Home Assistant ricaricato!"
     },
@@ -93,7 +93,7 @@ window.STRINGS = {
       en: "Packages file restored! Reload Home Assistant manually.",
       es: "¡Archivo de paquetes restaurado! Recarga Home Assistant manualmente.",
       de: "Paketdatei wiederhergestellt! Lade Home Assistant manuell neu.",
-      fr: "Fichier de paquets restauré ! Rechargez Home Assistant manuellement.",
+      fr: "Fichier packages restauré ! Rechargez Home Assistant manuellement.",
       nl: "Pakkettenbestand hersteld! Herlaad Home Assistant handmatig.",
       it: "File pacchetti ripristinato! Ricarica Home Assistant manualmente."
     },
@@ -101,7 +101,7 @@ window.STRINGS = {
       en: "Packages file restored!",
       es: "¡Archivo de paquetes restaurado!",
       de: "Paketdatei wiederhergestellt!",
-      fr: "Fichier de paquets restauré !",
+      fr: "Fichier packages restauré !",
       nl: "Pakkettenbestand hersteld!",
       it: "File pacchetti ripristinato!"
     },
@@ -316,7 +316,7 @@ window.STRINGS = {
         en: "Scripts",
         es: "Guiones",
         de: "Skripte",
-        fr: "Scénarios",
+        fr: "Scripts",
         nl: "Scripts",
         it: "Script"
       },
@@ -340,7 +340,7 @@ window.STRINGS = {
         en: "Packages",
         es: "Paquetes",
         de: "Pakete",
-        fr: "Paquets",
+        fr: "Packages",
         nl: "Pakketten",
         it: "Pacchetti"
       },
@@ -549,6 +549,14 @@ window.STRINGS = {
         fr: "Impossible de trouver {path}. Créez-le ou choisissez le bon dossier.",
         nl: "We konden {path} niet vinden. Maak het aan of kies de juiste map.",
         it: "Impossibile trovare {path}. Crealo o scegli la cartella corretta."
+      },
+      invalidAddonBackupPath: {
+        en: "In Add-on mode, backup folder must be in /backup, /media, /share, /ssl, /config, or /addons. Paths like /data or /data/mounts are not supported.",
+        es: "En modo Add-on, la carpeta de copia debe estar en /backup, /media, /share, /ssl, /config o /addons. Las rutas como /data o /data/mounts no son compatibles.",
+        de: "Im Add-on-Modus muss der Backup-Ordner in /backup, /media, /share, /ssl, /config oder /addons liegen. Pfade wie /data oder /data/mounts werden nicht unterstützt.",
+        fr: "En mode Add-on, le dossier de sauvegarde doit être dans /backup, /media, /share, /ssl, /config ou /addons. Les chemins comme /data ou /data/mounts ne sont pas pris en charge.",
+        nl: "In Add-on-modus moet de back-upmap in /backup, /media, /share, /ssl, /config of /addons staan. Paden zoals /data of /data/mounts worden niet ondersteund.",
+        it: "In modalità Add-on, la cartella di backup deve trovarsi in /backup, /media, /share, /ssl, /config o /addons. I percorsi come /data o /data/mounts non sono supportati."
       },
       notDirectory: {
         en: "{path} isn't a folder. Choose a directory instead.",
@@ -812,7 +820,7 @@ window.STRINGS = {
         en: "Packages",
         es: "Paquetes",
         de: "Pakete",
-        fr: "Paquets",
+        fr: "Packages",
         nl: "Pakketten",
         it: "Pacchetti"
       },
@@ -820,7 +828,7 @@ window.STRINGS = {
         en: "Search Packages files...",
         es: "Buscar archivos de Paquetes...",
         de: "Paket-Dateien suchen...",
-        fr: "Rechercher des fichiers Paquets...",
+        fr: "Rechercher des fichiers Packages...",
         nl: "Zoek Pakketten-bestanden...",
         it: "Cerca file Pacchetti..."
       },
@@ -828,7 +836,7 @@ window.STRINGS = {
         en: "Loading Packages files...",
         es: "Cargando archivos de Paquetes...",
         de: "Lade Paket-Dateien...",
-        fr: "Chargement des fichiers Paquets...",
+        fr: "Chargement des fichiers Packages...",
         nl: "Pakketten-bestanden laden...",
         it: "Caricamento file Pacchetti..."
       },
@@ -836,7 +844,7 @@ window.STRINGS = {
         en: "Select a backup to view Packages files",
         es: "Selecciona una copia de seguridad para ver archivos de Paquetes",
         de: "Wähle ein Backup, um Paket-Dateien anzuzeigen",
-        fr: "Sélectionnez une sauvegarde pour voir les fichiers Paquets",
+        fr: "Sélectionnez une sauvegarde pour voir les fichiers Packages",
         nl: "Selecteer een back-up om Pakketten-bestanden te bekijken",
         it: "Seleziona un backup per visualizzare i file Pacchetti"
       },
@@ -844,7 +852,7 @@ window.STRINGS = {
         en: "No Packages files found in this backup",
         es: "No se encontraron archivos de Paquetes en esta copia de seguridad",
         de: "Keine Paket-Dateien in diesem Backup gefunden",
-        fr: "Aucun fichier Paquet trouvé dans cette sauvegarde",
+        fr: "Aucun fichier Packages trouvé dans cette sauvegarde",
         nl: "Geen Pakketten-bestanden gevonden in deze back-up",
         it: "Nessun file Pacchetti trovato in questo backup"
       },
@@ -852,7 +860,7 @@ window.STRINGS = {
         en: "Packages backups are disabled. Enable them in Settings to view files.",
         es: "Las copias de Paquetes están desactivadas. Actívalas en Ajustes para ver los archivos.",
         de: "Paket-Backups sind deaktiviert. Aktiviere sie in den Einstellungen, um Dateien anzuzeigen.",
-        fr: "Les sauvegardes de Paquets sont désactivées. Activez-les dans les Paramètres pour voir les fichiers.",
+        fr: "Les sauvegardes Packages sont désactivées. Activez-les dans les Paramètres pour voir les fichiers.",
         nl: "Pakketten back-ups zijn uitgeschakeld. Schakel ze in bij Instellingen om bestanden te bekijken.",
         it: "I backup dei Pacchetti sono disabilitati. Abilitali nelle Impostazioni per visualizzare i file."
       }
