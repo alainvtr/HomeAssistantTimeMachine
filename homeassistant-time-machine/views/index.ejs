@@ -675,8 +675,20 @@
     // Handles format: YYYY-MM-DD-HHMMSS (e.g., 2025-10-17-085000)
     function formatFolderName(folderName, mtime) {
       let date;
-      // Try parsing YYYY-MM-DD-HHMMSS
-      if (/^\d{4}-\d{2}-\d{2}-\d{6}$/.test(folderName)) {
+      // Prefer the folder's real filesystem mtime when we have it: it's an absolute
+      // instant, so the browser renders it correctly in the viewer's own local time
+      // regardless of what timezone the server used when it generated the folder
+      // name. The folder-name digits (YYYY-MM-DD-HHMMSS) are generated using
+      // whatever timezone happened to be in effect at backup time - the browser's
+      // timezone for UI-initiated backups, but the server's own local time as a
+      // fallback for triggers that don't supply one (e.g. an HA automation calling
+      // the addon over stdin) - so parsing them as if they were already in the
+      // viewer's local time can display (and, before the accompanying app.js fix,
+      // even chronologically order) a backup under the wrong time.
+      if (mtime) {
+        date = new Date(mtime);
+      } else if (/^\d{4}-\d{2}-\d{2}-\d{6}$/.test(folderName)) {
+        // Try parsing YYYY-MM-DD-HHMMSS
         const year = parseInt(folderName.substring(0, 4));
         const month = parseInt(folderName.substring(5, 7)) - 1;
         const day = parseInt(folderName.substring(8, 10));
@@ -692,8 +704,6 @@
         const hour = parseInt(folderName.substring(8, 10));
         const minute = parseInt(folderName.substring(10, 12));
         date = new Date(year, month, day, hour, minute);
-      } else if (mtime) {
-        date = new Date(mtime);
       } else {
         // Fallback for unknown formats
         return folderName;
