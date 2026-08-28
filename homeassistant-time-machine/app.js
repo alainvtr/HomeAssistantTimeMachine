@@ -1085,6 +1085,7 @@ async function loadDockerSettings() {
     smartBackupEnabled: false,
     diffPalette: 1,
     showOnlyChanges: false,
+    timezone: null,
     ...cachedSettings
   };
 
@@ -1137,7 +1138,8 @@ async function saveDockerSettings(settings) {
     packagesEnabled: settings.packagesEnabled ?? false,
     smartBackupEnabled: settings.smartBackupEnabled ?? false,
     diffPalette: settings.diffPalette || 1,
-    showOnlyChanges: settings.showOnlyChanges ?? false
+    showOnlyChanges: settings.showOnlyChanges ?? false,
+    timezone: settings.timezone || null
   };
 
   // Save to file
@@ -1243,8 +1245,12 @@ app.post('/api/scan-backups', async (req, res) => {
 
     let backups = await getBackupDirs(backupRootPath);
 
-    // Sort descending to show newest first
-    backups.sort((a, b) => b.folderName.localeCompare(a.folderName));
+    // Sort descending to show newest first. Use the folder's real filesystem mtime
+    // rather than comparing folder-name digits - those digits can be written using
+    // different timezone bases depending on how the backup was triggered (see
+    // getAllBackupPaths for the full explanation), so string-sorting them can put
+    // backups out of their real chronological order.
+    backups.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
 
     // If mode is specified, filter backups to only include those with relevant files
     if (mode) {
@@ -2570,34 +2576,58 @@ app.post('/api/validate-path', async (req, res) => {
 
 // Helper function to get all backup paths in reverse chronological order
 async function getAllBackupPaths(backupRoot) {
-  const allBackups = [];
+  // Collect candidate backup folders first (year/month string filtering is just a
+  // cheap way to avoid walking irrelevant directories - it does not need to be
+  // chronologically precise, since the actual ordering below is done by real
+  // filesystem mtime, not by parsing these names).
+  const candidates = [];
   try {
     const years = await fs.readdir(backupRoot);
     const yearDirs = years.filter(y => /^\d{4}$/.test(y));
-    yearDirs.sort().reverse();
 
     for (const year of yearDirs) {
       const yearPath = path.join(backupRoot, year);
       const months = await fs.readdir(yearPath);
       const monthDirs = months.filter(m => /^\d{2}$/.test(m));
-      monthDirs.sort().reverse();
 
       for (const month of monthDirs) {
         const monthPath = path.join(yearPath, month);
         const backups = await fs.readdir(monthPath);
         const backupDirs = backups.filter(b => /^\d{4}-\d{2}-\d{2}-\d{6}$/.test(b));
-        backupDirs.sort().reverse();
 
         for (const backup of backupDirs) {
-          allBackups.push(path.join(monthPath, backup));
+          candidates.push(path.join(monthPath, backup));
         }
       }
     }
-    return allBackups;
   } catch (err) {
     console.log('[smart-backup] Error getting backup paths:', err.message);
     return [];
   }
+
+  // Order by the backup folder's actual filesystem mtime rather than by parsing/
+  // sorting the folder-name timestamp digits. Folder names are generated using
+  // whatever timezone happened to be in effect for that particular backup trigger
+  // (browser-supplied timezone for UI-initiated backups, but server-local time as
+  // a fallback for triggers - e.g. stdin/HA-automation-initiated backups - that
+  // don't pass one explicitly). If two backups were named using different time
+  // bases, sorting by the digits can get their real chronological order wrong,
+  // which corrupts smart-backup chain resolution (the "changed" comparison can
+  // end up reading the wrong historical version of a file). mtime is an absolute
+  // instant and isn't affected by any of that, so it's the reliable source of
+  // truth for ordering.
+  const withMtime = await Promise.all(candidates.map(async (backupPath) => {
+    try {
+      const stats = await fs.stat(backupPath);
+      return { backupPath, mtimeMs: stats.mtimeMs };
+    } catch (err) {
+      return { backupPath, mtimeMs: 0 };
+    }
+  }));
+
+  withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return withMtime.map(entry => entry.backupPath);
 }
 
 // Helper function to find the most recent version of a file by walking the backup chain
@@ -2759,10 +2789,44 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
   let now = new Date();
   let YYYY, MM, DD, HH, mm, ss;
 
-  if (timezone) {
-    // Use the specified timezone
+  // Resolve which timezone to stamp this backup's folder name with. Some triggers
+  // (the "Backup Now" button, a saved schedule) supply the browser's own timezone
+  // explicitly. Others - e.g. an HA automation invoking the addon over stdin, or a
+  // pre-restore safety backup before the user's schedule has ever been saved -
+  // don't have a browser in the loop and previously fell straight through to the
+  // server container's own local time (typically UTC), silently naming that
+  // backup's folder using a different time base than every other backup. Since
+  // backup ordering/chain-resolution used to be derived from these folder-name
+  // digits, a mismatch here could make an older backup look newer than it really
+  // was (or vice versa). Falling back to the last timezone we've actually seen
+  // from the browser (persisted in docker-app-settings.json) keeps every backup's
+  // folder name on a consistent, real-world time base even when this particular
+  // trigger didn't supply one itself.
+  let effectiveTimezoneForStamp = timezone;
+  if (effectiveTimezoneForStamp) {
+    try {
+      const currentSettings = await loadDockerSettings();
+      if (currentSettings.timezone !== effectiveTimezoneForStamp) {
+        await saveDockerSettings({ ...currentSettings, timezone: effectiveTimezoneForStamp });
+      }
+    } catch (err) {
+      // Non-fatal: persisting the timezone is a best-effort convenience.
+    }
+  } else {
+    try {
+      const currentSettings = await loadDockerSettings();
+      if (currentSettings.timezone) {
+        effectiveTimezoneForStamp = currentSettings.timezone;
+      }
+    } catch (err) {
+      // Fall through to server-local time below.
+    }
+  }
+
+  if (effectiveTimezoneForStamp) {
+    // Use the specified (or last-known persisted) timezone
     const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
+      timeZone: effectiveTimezoneForStamp,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -3737,7 +3801,14 @@ loadBackupState().then(() => {
                     liveConfigPath: job.liveConfigPath || options.liveConfigPath || '/config',
                     backupFolderPath: job.backupFolderPath || options.backupFolderPath || '/media/timemachine',
                     maxBackupsEnabled: job.maxBackupsEnabled,
-                    maxBackupsCount: job.maxBackupsCount
+                    maxBackupsCount: job.maxBackupsCount,
+                    // Pass these through explicitly instead of relying on /api/backup-now's
+                    // "smartBackupEnabled is undefined" fallback (which re-reads them from
+                    // the saved 'default-backup-job' job) to fill them in - that fallback
+                    // only works by coincidence for that one fixed job id, and every backup
+                    // taken by a schedule re-armed after a restart went through it.
+                    timezone: job.timezone,
+                    smartBackupEnabled: job.smartBackupEnabled
                   })
                 });
                 const result = await response.json();
