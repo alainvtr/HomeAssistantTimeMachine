@@ -349,6 +349,7 @@
 
     const SETTINGS_MESSAGE_LOOKUP = {
       directory_not_found: 'ui.settingsMessages.directoryNotFound',
+      invalid_addon_backup_path: 'ui.settingsMessages.invalidAddonBackupPath',
       not_directory: 'ui.settingsMessages.notDirectory',
       missing_automations: 'ui.settingsMessages.missingAutomations',
       cannot_access: 'ui.settingsMessages.cannotAccess',
@@ -660,12 +661,34 @@
       }
     }
 
+    // Get the current system timezone safely
+    function getTimezone() {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      } catch (e) {
+        console.warn('Error getting timezone:', e);
+        return 'UTC';
+      }
+    }
+
     // Format backup folder name to date/time
     // Handles format: YYYY-MM-DD-HHMMSS (e.g., 2025-10-17-085000)
     function formatFolderName(folderName, mtime) {
       let date;
-      // Try parsing YYYY-MM-DD-HHMMSS
-      if (/^\d{4}-\d{2}-\d{2}-\d{6}$/.test(folderName)) {
+      // Prefer the folder's real filesystem mtime when we have it: it's an absolute
+      // instant, so the browser renders it correctly in the viewer's own local time
+      // regardless of what timezone the server used when it generated the folder
+      // name. The folder-name digits (YYYY-MM-DD-HHMMSS) are generated using
+      // whatever timezone happened to be in effect at backup time - the browser's
+      // timezone for UI-initiated backups, but the server's own local time as a
+      // fallback for triggers that don't supply one (e.g. an HA automation calling
+      // the addon over stdin) - so parsing them as if they were already in the
+      // viewer's local time can display (and, before the accompanying app.js fix,
+      // even chronologically order) a backup under the wrong time.
+      if (mtime) {
+        date = new Date(mtime);
+      } else if (/^\d{4}-\d{2}-\d{2}-\d{6}$/.test(folderName)) {
+        // Try parsing YYYY-MM-DD-HHMMSS
         const year = parseInt(folderName.substring(0, 4));
         const month = parseInt(folderName.substring(5, 7)) - 1;
         const day = parseInt(folderName.substring(8, 10));
@@ -681,8 +704,6 @@
         const hour = parseInt(folderName.substring(8, 10));
         const minute = parseInt(folderName.substring(10, 12));
         date = new Date(year, month, day, hour, minute);
-      } else if (mtime) {
-        date = new Date(mtime);
       } else {
         // Fallback for unknown formats
         return folderName;
@@ -692,15 +713,21 @@
         return folderName; // Invalid date, return original name
       }
 
-      // Use a single Intl.DateTimeFormat call for full date and time formatting
-      return new Intl.DateTimeFormat(currentLanguage, {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true // This will handle AM/PM and 'at' for English, and appropriate for other locales
-      }).format(date);
+      // Use a single Intl.DateTimeFormat call for full date and time formatting with fallback
+      const locale = currentLanguage || 'en';
+      try {
+        return new Intl.DateTimeFormat(locale, {
+          month: 'short',
+          day: '2-digit',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true // This will handle AM/PM and 'at' for English, and appropriate for other locales
+        }).format(date);
+      } catch (e) {
+        console.warn('Intl formatting failed:', e);
+        return date.toLocaleString();
+      }
     }
 
     // Format backup name
@@ -977,7 +1004,11 @@
         });
 
         const data = await response.json();
-        allItems = data.automations || data.scripts || [];
+        const rawItems = data.automations || data.scripts || [];
+        allItems = rawItems.map((item, idx) => ({
+          ...item,
+          _uid: item.id ? item.id : (item.alias ? `${item.alias}__idx_${idx}` : `item__idx_${idx}`)
+        }));
 
         if (allItems.length === 0) {
           document.getElementById('itemsList').innerHTML = `<p class="empty-state">${getStyledText('ui.itemsList.noItems', { mode: currentMode })}</p>`;
@@ -1004,7 +1035,12 @@
     // Load live items
     async function loadLiveItems() {
       try {
-        const itemIdentifiers = allItems.map(item => item.id || item.alias).filter(Boolean);
+        const itemIdentifiers = allItems.map((item, index) => ({
+          _uid: item._uid,
+          id: item.id || null,
+          alias: item.alias || null,
+          index: index
+        }));
 
         const response = await fetch(url('/api/get-live-items'), {
           method: 'POST',
@@ -1018,15 +1054,18 @@
         // Calculate statuses
         itemStatuses = {};
         allItems.forEach(item => {
-          const key = item.id || item.alias || '';
+          const key = item._uid || item.id || item.alias || '';
           if (!key) return;
 
           const liveItem = liveItemsMap[key];
           if (!liveItem) {
             itemStatuses[key] = 'deleted';
           } else {
-            const backupYaml = jsyaml.dump(item);
-            const liveYaml = jsyaml.dump(liveItem);
+            // Strip out internal _uid field when dumping YAML for clean comparison
+            const { _uid, ...cleanItem } = item;
+            const { _uid: liveUid, ...cleanLiveItem } = liveItem;
+            const backupYaml = jsyaml.dump(cleanItem);
+            const liveYaml = jsyaml.dump(cleanLiveItem);
             itemStatuses[key] = backupYaml === liveYaml ? 'unchanged' : 'changed';
           }
         });
@@ -1125,7 +1164,7 @@
       // If showOnlyChanges is enabled, also filter to show only changed/deleted items
       if (showOnlyChanges) {
         filtered = filtered.filter(item => {
-          const key = item.id || item.alias || '';
+          const key = item._uid || item.id || item.alias || '';
           const status = itemStatuses[key];
           return status === 'changed' || status === 'deleted';
         });
@@ -1146,7 +1185,7 @@
 
       filteredItemsGlobal = items;
       itemsList.innerHTML = items.map((item, idx) => {
-        const key = item.id || item.alias || '';
+        const key = item._uid || item.id || item.alias || '';
         const status = itemStatuses[key] || '';
         const isSelected = currentItemIndex === idx && activePanel === 'items';
         const isLightMode = currentTheme === 'light';
@@ -1216,11 +1255,13 @@
     // Show diff viewer
     async function showDiffViewer(item) {
       selectedItem = item;
-      const key = item.id || item.alias || '';
+      const key = item._uid || item.id || item.alias || '';
       const liveItem = liveItemsMap[key];
       const status = itemStatuses[key];
-      const backupYaml = jsyaml.dump(item);
-      const liveYaml = liveItem ? jsyaml.dump(liveItem) : null;
+      const { _uid, ...cleanItem } = item;
+      const cleanLiveItem = liveItem ? (({ _uid: liveUid, ...rest }) => rest)(liveItem) : null;
+      const backupYaml = jsyaml.dump(cleanItem);
+      const liveYaml = cleanLiveItem ? jsyaml.dump(cleanLiveItem) : null;
       const noChanges = backupYaml === liveYaml;
 
       document.getElementById('diffTitle').textContent = item.alias || item.id || 'Item';
@@ -1279,7 +1320,7 @@
         const body = {
           backupPath: currentBackupPath,
           automationIdentifier: identifier,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezone: getTimezone(),
           liveConfigPath: haConfig.liveConfigPath
         };
 
@@ -1646,7 +1687,7 @@
           body: JSON.stringify({
             fileName: selectedLovelaceFile.name,
             content: lovelaceBackupContent,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            timezone: getTimezone(),
             liveConfigPath: haConfig.liveConfigPath
           })
         });
@@ -1873,7 +1914,7 @@
         const response = await fetch(url('/api/restore-esphome-file'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName: selectedEsphomeFile.name, content: esphomeBackupContent, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, liveConfigPath: haConfig.liveConfigPath })
+          body: JSON.stringify({ fileName: selectedEsphomeFile.name, content: esphomeBackupContent, timezone: getTimezone(), liveConfigPath: haConfig.liveConfigPath })
         });
         if (!response.ok) throw new Error('Restore failed');
         const data = await response.json(); // Get the response data
@@ -2074,7 +2115,7 @@
         const response = await fetch(url('/api/restore-packages-file'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName: selectedPackagesFile.name, content: packagesBackupContent, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, liveConfigPath: haConfig.liveConfigPath })
+          body: JSON.stringify({ fileName: selectedPackagesFile.name, content: packagesBackupContent, timezone: getTimezone(), liveConfigPath: haConfig.liveConfigPath })
         });
         if (!response.ok) throw new Error('Restore failed');
         const data = await response.json(); // Get the response data
@@ -2168,8 +2209,10 @@
         // Update title and clear subtitle (no backup selected yet)
         document.getElementById('itemsTitle').textContent = getStyledText(`ui.buttons.${newMode}`);
         document.getElementById('itemsSubtitle').textContent = getStyledText('ui.itemsList.noBackupSelected');
-        // Note: Don't clear itemsList here - leave existing content visible until new content loads
-        // The list will be updated when user selects a backup from the newly loaded list
+        // Clear the items list too: currentBackupPath was just reset to null above, so
+        // applyFilters() will render the correct "select a backup" placeholder for the
+        // new mode instead of leaving the previous mode's items visible on screen.
+        applyFilters();
       });
     });
 
@@ -2406,7 +2449,7 @@
       const smartBackupEnabled = document.getElementById('smartBackupEnabled').checked;
 
       const cronExpression = scheduleToCron(scheduleFrequency, scheduleTime, scheduleDay);
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const timezone = getTimezone();
 
       await fetch(url('/api/schedule-backup'), {
         method: 'POST',
@@ -2506,7 +2549,7 @@
       try {
         const liveConfigPath = document.getElementById('liveConfigPath').value || '/config';
         const backupFolderPath = document.getElementById('backupFolderPath').value || '/backup';
-        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const timezone = getTimezone();
         console.log('[backup-now-ui] Starting backup with paths:', { liveConfigPath, backupFolderPath, timezone });
 
         const response = await fetch(url('/api/backup-now'), {
