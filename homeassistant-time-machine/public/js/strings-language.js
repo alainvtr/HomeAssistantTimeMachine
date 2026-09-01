@@ -105,6 +105,30 @@ window.STRINGS = {
       nl: "Pakkettenbestand hersteld!",
       it: "File pacchetti ripristinato!"
     },
+    otherYamlReloaded: {
+      en: "File restored and Home Assistant reloaded!",
+      es: "¡Archivo restaurado y Home Assistant recargado!",
+      de: "Datei wiederhergestellt und Home Assistant neugeladen!",
+      fr: "Fichier restauré et Home Assistant rechargé !",
+      nl: "Bestand hersteld en Home Assistant herladen!",
+      it: "File ripristinato e Home Assistant ricaricato!"
+    },
+    otherYamlManualReload: {
+      en: "File restored! Reload Home Assistant manually.",
+      es: "¡Archivo restaurado! Recarga Home Assistant manualmente.",
+      de: "Datei wiederhergestellt! Lade Home Assistant manuell neu.",
+      fr: "Fichier restauré ! Rechargez Home Assistant manuellement.",
+      nl: "Bestand hersteld! Herlaad Home Assistant handmatig.",
+      it: "File ripristinato! Ricarica Home Assistant manualmente."
+    },
+    otherYamlRestored: {
+      en: "File restored!",
+      es: "¡Archivo restaurado!",
+      de: "Datei wiederhergestellt!",
+      fr: "Fichier restauré !",
+      nl: "Bestand hersteld!",
+      it: "File ripristinato!"
+    },
     restartButton: {
       en: "Restart",
       es: "Reiniciar",
@@ -343,6 +367,14 @@ window.STRINGS = {
         fr: "Packages",
         nl: "Pakketten",
         it: "Pacchetti"
+      },
+      otherYaml: {
+        en: "Other YAML",
+        es: "Otros YAML",
+        de: "Andere YAML",
+        fr: "Divers YAML",
+        nl: "Overige YAML",
+        it: "Altri YAML"
       },
       settings: {
         en: "Settings",
@@ -863,6 +895,56 @@ window.STRINGS = {
         fr: "Les sauvegardes Packages sont désactivées. Activez-les dans les Paramètres pour voir les fichiers.",
         nl: "Pakketten back-ups zijn uitgeschakeld. Schakel ze in bij Instellingen om bestanden te bekijken.",
         it: "I backup dei Pacchetti sono disabilitati. Abilitali nelle Impostazioni per visualizzare i file."
+      }
+    },
+    otherYaml: {
+      title: {
+        en: "Other YAML",
+        es: "Otros YAML",
+        de: "Andere YAML",
+        fr: "Divers YAML",
+        nl: "Overige YAML",
+        it: "Altri YAML"
+      },
+      searchPlaceholder: {
+        en: "Search Other YAML files...",
+        es: "Buscar otros archivos YAML...",
+        de: "Andere YAML-Dateien suchen...",
+        fr: "Rechercher des fichiers YAML divers...",
+        nl: "Zoek overige YAML-bestanden...",
+        it: "Cerca altri file YAML..."
+      },
+      loading: {
+        en: "Loading Other YAML files...",
+        es: "Cargando otros archivos YAML...",
+        de: "Lade andere YAML-Dateien...",
+        fr: "Chargement des fichiers YAML divers...",
+        nl: "Overige YAML-bestanden laden...",
+        it: "Caricamento altri file YAML..."
+      },
+      selectBackup: {
+        en: "Select a backup to view Other YAML files",
+        es: "Selecciona una copia de seguridad para ver otros archivos YAML",
+        de: "Wähle ein Backup, um andere YAML-Dateien anzuzeigen",
+        fr: "Sélectionnez une sauvegarde pour voir les fichiers YAML divers",
+        nl: "Selecteer een back-up om overige YAML-bestanden te bekijken",
+        it: "Seleziona un backup per visualizzare altri file YAML"
+      },
+      noFiles: {
+        en: "No Other YAML files found in this backup",
+        es: "No se encontraron otros archivos YAML en esta copia de seguridad",
+        de: "Keine anderen YAML-Dateien in diesem Backup gefunden",
+        fr: "Aucun fichier YAML divers trouvé dans cette sauvegarde",
+        nl: "Geen overige YAML-bestanden gevonden in deze back-up",
+        it: "Nessun altro file YAML trovato in questo backup"
+      },
+      disabled: {
+        en: "Other YAML backups are disabled. Enable them in Settings to view files.",
+        es: "Las copias de otros YAML están desactivadas. Actívalas en Ajustes para ver los archivos.",
+        de: "Andere YAML-Backups sind deaktiviert. Aktiviere sie in den Einstellungen, um Dateien anzuzeigen.",
+        fr: "Les sauvegardes YAML divers sont désactivées. Activez-les dans les Paramètres pour voir les fichiers.",
+        nl: "Overige YAML back-ups zijn uitgeschakeld. Schakel ze in bij Instellingen om bestanden te bekijken.",
+        it: "I backup di altri YAML sono disabilitati. Abilitali nelle Impostazioni per visualizzare i file."
       }
     },
     placeholders: {
