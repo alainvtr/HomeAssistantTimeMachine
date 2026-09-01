@@ -396,6 +396,7 @@ app.get('/', async (req, res) => {
       currentMode: 'automations',
       esphomeEnabled: options.esphome,
       packagesEnabled: options.packages,
+      otherYamlEnabled: options.other_yaml,
       language: options.language || 'en'
     });
   } catch (error) {
@@ -406,6 +407,7 @@ app.get('/', async (req, res) => {
       currentMode: 'automations',
       esphomeEnabled: false,
       packagesEnabled: false,
+      otherYamlEnabled: false,
       language: 'en'
     });
   }
@@ -762,12 +764,16 @@ async function getAddonOptions() {
 
     let esphomeEnabled = parsedOptions?.esphome ?? false;
     let packagesEnabled = parsedOptions?.packages ?? false;
+    let otherYamlEnabled = parsedOptions?.other_yaml ?? false;
     let dockerSettings = {};
     try {
       dockerSettings = await loadDockerSettings();
       if (dockerSettings.__loadedFromFile) {
         if (typeof dockerSettings.packagesEnabled === 'boolean') {
           packagesEnabled = dockerSettings.packagesEnabled;
+        }
+        if (typeof dockerSettings.otherYamlEnabled === 'boolean') {
+          otherYamlEnabled = dockerSettings.otherYamlEnabled;
         }
       }
     } catch (settingsError) {
@@ -784,6 +790,7 @@ async function getAddonOptions() {
       language: parsedOptions?.language || 'en',
       esphome: esphomeEnabled,
       packages: packagesEnabled,
+      other_yaml: otherYamlEnabled,
       backupFolderPath: dockerSettings.backupFolderPath,
       liveConfigPath: dockerSettings.liveConfigPath,
     };
@@ -808,6 +815,7 @@ async function getAddonOptions() {
         language: dockerSettings.language || 'en',
         esphome: dockerSettings.esphomeEnabled ?? false,
         packages: dockerSettings.packagesEnabled ?? false,
+        other_yaml: dockerSettings.otherYamlEnabled ?? false,
       };
     }
 
@@ -826,6 +834,7 @@ async function getAddonOptions() {
         language: dockerSettings.language || parsed.language || 'en',
         esphome: dockerSettings.esphomeEnabled ?? false,
         packages: dockerSettings.packagesEnabled ?? false,
+        other_yaml: dockerSettings.otherYamlEnabled ?? false,
       };
     } catch (credError) {
       // No credentials configured
@@ -839,6 +848,7 @@ async function getAddonOptions() {
         language: dockerSettings.language || 'en',
         esphome: dockerSettings.esphomeEnabled ?? false,
         packages: dockerSettings.packagesEnabled ?? false,
+        other_yaml: dockerSettings.otherYamlEnabled ?? false,
       };
     }
   }
@@ -893,12 +903,43 @@ async function isEsphomeEnabled() {
   }
 }
 
+// Fixed allowlist of well-known, official Home Assistant split-config filenames that
+// live directly at the root of the config directory. Deliberately NOT a directory
+// scan: scanning every .yaml/.yml in /config would sweep up anything a user happens
+// to have there and turn the tab into clutter. secrets.yaml is intentionally excluded
+// - it holds credentials in plain text, and this feature renders file content in the
+// browser, so it must never become reachable through it. automations.yaml/scripts.yaml/
+// ui-lovelace.yaml are also excluded since they already have their own dedicated tabs.
+const OTHER_YAML_ALLOWLIST = [
+  'configuration.yaml',
+  'customize.yaml',
+  'customize_glob.yaml',
+  'customize_domain.yaml',
+  'command_line.yaml',
+  'scene.yaml',
+  'scenes.yaml',
+  'groups.yaml',
+  'known_devices.yaml',
+  'google_assistant.yaml',
+  'alexa.yaml'
+];
+
 async function isPackagesEnabled() {
   try {
     const options = await getAddonOptions();
     return !!(options?.packages);
   } catch (error) {
     console.error('[packages] Failed to determine Packages status:', error);
+    return false;
+  }
+}
+
+async function isOtherYamlEnabled() {
+  try {
+    const options = await getAddonOptions();
+    return !!(options?.other_yaml);
+  } catch (error) {
+    console.error('[other-yaml] Failed to determine Other YAML status:', error);
     return false;
   }
 }
@@ -932,6 +973,7 @@ app.get('/api/app-settings', async (req, res) => {
     const auth = await getHomeAssistantAuth(options);
 
     const packagesEnabled = await isPackagesEnabled();
+    const otherYamlEnabled = await isOtherYamlEnabled();
     const baseResponse = {
       mode: options.mode,
       haUrl: options.home_assistant_url,
@@ -942,6 +984,7 @@ app.get('/api/app-settings', async (req, res) => {
       theme: options.theme || 'dark',
       esphomeEnabled,
       packagesEnabled,
+      otherYamlEnabled,
       diffPalette: options.diffPalette || 1,
     };
     debugLog('[app-settings] Base response object created:', { esphomeEnabled: baseResponse.esphomeEnabled });
@@ -959,12 +1002,17 @@ app.get('/api/app-settings', async (req, res) => {
         ? savedSettings.packagesEnabled
         : packagesEnabled;
 
+      const finalOtherYamlEnabled = typeof savedSettings.otherYamlEnabled === 'boolean'
+        ? savedSettings.otherYamlEnabled
+        : otherYamlEnabled;
+
       const mergedSettings = {
         liveConfigPath: savedSettings.liveConfigPath || '/config',
         backupFolderPath: savedSettings.backupFolderPath || '/media/backups/yaml',
         theme: options.theme || savedSettings.theme || baseResponse.theme || 'dark',
         esphomeEnabled: options.esphome ?? finalEsphomeEnabled,
         packagesEnabled: finalPackagesEnabled,
+        otherYamlEnabled: finalOtherYamlEnabled,
         smartBackupEnabled: savedSettings.smartBackupEnabled ?? false,
         diffPalette: savedSettings.diffPalette || 1,
         showOnlyChanges: savedSettings.showOnlyChanges ?? false,
@@ -1005,6 +1053,7 @@ app.get('/api/app-settings', async (req, res) => {
       language: dockerSettings.language || 'en',
       esphomeEnabled: finalEsphomeEnabled,
       packagesEnabled: dockerSettings.packagesEnabled ?? false,
+      otherYamlEnabled: dockerSettings.otherYamlEnabled ?? false,
       smartBackupEnabled: dockerSettings.smartBackupEnabled ?? false,
       diffPalette: dockerSettings.diffPalette || 1,
       showOnlyChanges: dockerSettings.showOnlyChanges ?? false,
@@ -1021,7 +1070,7 @@ app.get('/api/app-settings', async (req, res) => {
 // Save Docker app settings
 app.post('/api/app-settings', async (req, res) => {
   try {
-    const { liveConfigPath, backupFolderPath, theme, esphomeEnabled, packagesEnabled, language, smartBackupEnabled, diffPalette, showOnlyChanges } = req.body;
+    const { liveConfigPath, backupFolderPath, theme, esphomeEnabled, packagesEnabled, otherYamlEnabled, language, smartBackupEnabled, diffPalette, showOnlyChanges } = req.body;
 
     const existingSettings = await loadDockerSettings();
     const settings = {
@@ -1031,6 +1080,7 @@ app.post('/api/app-settings', async (req, res) => {
       language: language || existingSettings.language || 'en',
       esphomeEnabled: typeof esphomeEnabled === 'boolean' ? esphomeEnabled : existingSettings.esphomeEnabled ?? false,
       packagesEnabled: typeof packagesEnabled === 'boolean' ? packagesEnabled : existingSettings.packagesEnabled ?? false,
+      otherYamlEnabled: typeof otherYamlEnabled === 'boolean' ? otherYamlEnabled : existingSettings.otherYamlEnabled ?? false,
       smartBackupEnabled: typeof smartBackupEnabled === 'boolean' ? smartBackupEnabled : existingSettings.smartBackupEnabled ?? false,
       diffPalette: diffPalette || existingSettings.diffPalette || 1,
       showOnlyChanges: typeof showOnlyChanges === 'boolean' ? showOnlyChanges : existingSettings.showOnlyChanges ?? false,
@@ -1082,6 +1132,7 @@ async function loadDockerSettings() {
     language: 'en',
     esphomeEnabled: false,
     packagesEnabled: false,
+    otherYamlEnabled: false,
     smartBackupEnabled: false,
     diffPalette: 1,
     showOnlyChanges: false,
@@ -1136,6 +1187,7 @@ async function saveDockerSettings(settings) {
     language: settings.language || 'en',
     esphomeEnabled: settings.esphomeEnabled ?? false,
     packagesEnabled: settings.packagesEnabled ?? false,
+    otherYamlEnabled: settings.otherYamlEnabled ?? false,
     smartBackupEnabled: settings.smartBackupEnabled ?? false,
     diffPalette: settings.diffPalette || 1,
     showOnlyChanges: settings.showOnlyChanges ?? false,
@@ -3710,6 +3762,141 @@ app.post('/api/restore-packages-file', async (req, res) => {
     res.json({ success: true, message: 'Package file restored successfully', needsRestart });
   } catch (error) {
     console.error('[restore-packages-file] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List which of the well-known root-level HA YAML files (see OTHER_YAML_ALLOWLIST)
+// are actually present in this backup.
+app.post('/api/get-backup-other-yaml', async (req, res) => {
+  try {
+    if (!(await isOtherYamlEnabled())) {
+      return res.status(404).json({ error: 'Other YAML feature disabled' });
+    }
+    const { backupPath } = req.body;
+
+    let rootFiles = null;
+    try {
+      const manifestPath = path.join(backupPath, '.backup_manifest.json');
+      const manifestData = await fs.readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(manifestData);
+      if (Array.isArray(manifest.files?.root)) {
+        rootFiles = manifest.files.root;
+      }
+    } catch (e) {
+      // No manifest (older full backup, or smart backup disabled at the time) - fall
+      // back to listing the backup folder itself below.
+    }
+
+    if (!rootFiles) {
+      try {
+        const entries = await fs.readdir(backupPath);
+        rootFiles = entries;
+      } catch (e) {
+        rootFiles = [];
+      }
+    }
+
+    const otherYamlFiles = OTHER_YAML_ALLOWLIST.filter(name => rootFiles.includes(name));
+    res.json({ otherYamlFiles });
+  } catch (error) {
+    console.error('[get-backup-other-yaml] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/get-backup-other-yaml-file', async (req, res) => {
+  try {
+    if (!(await isOtherYamlEnabled())) {
+      return res.status(404).json({ error: 'Other YAML feature disabled' });
+    }
+    const { backupPath, fileName } = req.body;
+
+    // The allowlist check is the actual protection here - these files live directly
+    // at the config root (unlike packages/esphome, which are confined to their own
+    // subdirectory), so this is what stands between this endpoint and something like
+    // secrets.yaml.
+    if (!OTHER_YAML_ALLOWLIST.includes(fileName)) {
+      return res.status(400).json({ error: 'File not allowed' });
+    }
+
+    const filePath = await resolveFileInBackupChain(backupPath, fileName);
+    const content = await fs.readFile(filePath, 'utf-8');
+    res.json({ content });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ error: 'File not found in this backup' });
+    }
+    console.error('[get-backup-other-yaml-file] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/get-live-other-yaml-file', async (req, res) => {
+  try {
+    if (!(await isOtherYamlEnabled())) {
+      return res.status(404).json({ error: 'Other YAML feature disabled' });
+    }
+    const { fileName, liveConfigPath } = req.body;
+
+    if (!OTHER_YAML_ALLOWLIST.includes(fileName)) {
+      return res.status(400).json({ error: 'File not allowed' });
+    }
+
+    const configPath = liveConfigPath || '/config';
+    const filePath = resolveWithinDirectory(configPath, fileName);
+    const content = await fs.readFile(filePath, 'utf-8');
+    res.json({ content });
+  } catch (error) {
+    if (error.code === 'INVALID_PATH') {
+      return res.status(400).json({ error: 'Invalid file path' });
+    }
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    console.error('[get-live-other-yaml-file] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/restore-other-yaml-file', async (req, res) => {
+  try {
+    if (!(await isOtherYamlEnabled())) {
+      return res.status(404).json({ error: 'Other YAML feature disabled' });
+    }
+    const { fileName, content, timezone, liveConfigPath, smartBackupEnabled } = req.body;
+
+    if (!OTHER_YAML_ALLOWLIST.includes(fileName)) {
+      return res.status(400).json({ error: 'File not allowed' });
+    }
+
+    // Perform a backup before restoring - respect Smart Backup setting, same safety
+    // net as every other restore endpoint. This matters more here than for
+    // packages/esphome/lovelace: configuration.yaml in particular is HA's own
+    // bootstrap file, so being able to undo a bad restore is important.
+    let effectiveSmartBackup = smartBackupEnabled;
+    if (typeof smartBackupEnabled === 'undefined') {
+      const scheduledJobsData = await loadScheduledJobs();
+      const defaultJob = scheduledJobsData.jobs?.['default-backup-job'] || {};
+      effectiveSmartBackup = defaultJob.smartBackupEnabled ?? false;
+    }
+    await performBackup(liveConfigPath || null, null, 'pre-restore', false, 100, timezone, effectiveSmartBackup);
+
+    const configPath = liveConfigPath || '/config';
+    const filePath = resolveWithinDirectory(configPath, fileName);
+
+    const contentToWrite = typeof content === 'string' ? content : YAML.stringify(content);
+    await fs.writeFile(filePath, contentToWrite, 'utf-8');
+
+    const auth = await getHomeAssistantAuth();
+    const needsRestart = !!(auth.baseUrl && auth.token);
+
+    res.json({ success: true, message: 'File restored successfully', needsRestart });
+  } catch (error) {
+    if (error.code === 'INVALID_PATH') {
+      return res.status(400).json({ error: 'Invalid file path' });
+    }
+    console.error('[restore-other-yaml-file] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
