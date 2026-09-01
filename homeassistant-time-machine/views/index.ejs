@@ -25,7 +25,8 @@
 </head>
 
 <body data-esphome-enabled="<%= esphomeEnabled ? 'true' : 'false' %>"
-  data-packages-enabled="<%= packagesEnabled ? 'true' : 'false' %>" data-language="<%= language || 'en' %>">
+  data-packages-enabled="<%= packagesEnabled ? 'true' : 'false' %>"
+  data-other-yaml-enabled="<%= otherYamlEnabled ? 'true' : 'false' %>" data-language="<%= language || 'en' %>">
   <script>
     (function applyInitialTheme(theme) {
       const normalized = theme === 'light' ? 'light' : 'dark';
@@ -253,6 +254,8 @@
           >ESPHome</button>
       <button class="tab" data-tab="packages" id="packagesTab" <% if (!packagesEnabled) { %>style="display: none;"<% }
           %>>Packages</button>
+      <button class="tab" data-tab="otherYaml" id="otherYamlTab" <% if (!otherYamlEnabled) { %>style="display: none;"<% }
+          %>>Other YAML</button>
     </div>
 
     <div class="content">
@@ -327,6 +330,7 @@
     let haConfig = null;
     let currentTheme = document.body.dataset.theme || document.documentElement.dataset.theme || 'dark';
     let esphomeFeatureEnabled = document.body.dataset.esphomeEnabled === 'true';
+    let otherYamlFeatureEnabled = document.body.dataset.otherYamlEnabled === 'true';
     let packagesFeatureEnabled = document.body.dataset.packagesEnabled === 'true';
     let showOnlyChanges = false; // Will be set from server in loadAppSettings()
 
@@ -441,6 +445,7 @@
       document.getElementById('lovelaceTab').textContent = getStyledText('ui.buttons.lovelace');
       document.getElementById('esphomeTab').textContent = getStyledText('ui.buttons.esphome');
       document.getElementById('packagesTab').textContent = getStyledText('ui.buttons.packages');
+      document.getElementById('otherYamlTab').textContent = getStyledText('ui.buttons.otherYaml');
       document.getElementById('settingsBtn').textContent = getStyledText('ui.buttons.settings');
 
       // Update main panel titles
@@ -527,6 +532,10 @@
       return getStyledText('ui.packages.disabled') || 'Packages backups are disabled. Enable them in the add-on configuration to view files.';
     }
 
+    function getOtherYamlDisabledMessage() {
+      return getStyledText('ui.otherYaml.disabled') || 'Other YAML backups are disabled. Enable them in Settings to view files.';
+    }
+
     function updateEsphomeVisibility() {
       const esphomeTab = document.getElementById('esphomeTab');
       if (esphomeTab) {
@@ -538,6 +547,13 @@
       const packagesTab = document.getElementById('packagesTab');
       if (packagesTab) {
         packagesTab.style.display = packagesFeatureEnabled ? 'inline-block' : 'none';
+      }
+    }
+
+    function updateOtherYamlVisibility() {
+      const otherYamlTab = document.getElementById('otherYamlTab');
+      if (otherYamlTab) {
+        otherYamlTab.style.display = otherYamlFeatureEnabled ? 'inline-block' : 'none';
       }
     }
 
@@ -574,6 +590,8 @@
           updateEsphomeVisibility();
           packagesFeatureEnabled = !!haConfig?.packagesEnabled;
           updatePackagesVisibility();
+          otherYamlFeatureEnabled = !!haConfig?.otherYamlEnabled;
+          updateOtherYamlVisibility();
           document.getElementById('heroSubtitle').textContent = getStyledText('ui.hero.subtitle');
           document.getElementById('itemsSubtitle').textContent = getStyledText('ui.itemsList.noBackupSelected');
           updateUIText(); // Update all UI text elements
@@ -952,6 +970,8 @@
         await loadEsphomeFiles();
       } else if (currentMode === 'packages') {
         await loadPackagesFiles();
+      } else if (currentMode === 'otherYaml') {
+        await loadOtherYamlFiles();
       } else {
         await loadBackupItems();
       }
@@ -978,6 +998,7 @@
           if (mode === 'lovelace') loadingText = getStyledText('ui.lovelace.loading') || 'Loading Lovelace files...';
           else if (mode === 'esphome') loadingText = getStyledText('ui.esphome.loading') || 'Loading ESPHome files...';
           else if (mode === 'packages') loadingText = getStyledText('ui.packages.loading') || 'Loading Packages files...';
+          else if (mode === 'otherYaml') loadingText = getStyledText('ui.otherYaml.loading') || 'Loading Other YAML files...';
 
           itemsList.innerHTML = `<p class="loading">${loadingText}</p>`;
         }
@@ -1092,7 +1113,7 @@
       const ensureArray = (value) => Array.isArray(value) ? [...value] : [];
 
       const normalizeLabel = (item) => {
-        if (currentMode === 'lovelace' || currentMode === 'esphome' || currentMode === 'packages') {
+        if (currentMode === 'lovelace' || currentMode === 'esphome' || currentMode === 'packages' || currentMode === 'otherYaml') {
           return (item?.name || '').toLowerCase();
         }
         return (item?.alias || item?.id || '').toLowerCase();
@@ -1151,6 +1172,22 @@
 
         sortItems(filtered);
         renderPackagesFiles(filtered);
+        return;
+      }
+
+      if (currentMode === 'otherYaml') {
+        let filtered = ensureArray(otherYamlFiles).filter(item => normalizeLabel(item).includes(searchTerm));
+
+        // If showOnlyChanges is enabled, filter to show only changed/deleted files
+        if (showOnlyChanges) {
+          filtered = filtered.filter(item => {
+            const status = otherYamlFileStatuses[item.name];
+            return status === 'changed' || status === 'deleted';
+          });
+        }
+
+        sortItems(filtered);
+        renderOtherYamlFiles(filtered);
         return;
       }
 
@@ -1387,6 +1424,13 @@
     let selectedPackagesFile = null;
     let packagesBackupContent = '';
     let packagesLiveContent = null;
+
+    // Other YAML files state (configuration.yaml, customize.yaml, etc.)
+    let otherYamlFiles = [];
+    let otherYamlFileStatuses = {};
+    let selectedOtherYamlFile = null;
+    let otherYamlBackupContent = '';
+    let otherYamlLiveContent = null;
 
     // Load Lovelace files
     async function loadLovelaceFiles() {
@@ -2149,6 +2193,224 @@
       }
     }
 
+    // Load Other YAML files (configuration.yaml, customize.yaml, etc.)
+    async function loadOtherYamlFiles() {
+      if (!currentBackupPath) return;
+      const itemsList = document.getElementById('itemsList');
+      if (!otherYamlFeatureEnabled) {
+        itemsList.innerHTML = `<p class="empty-state">${getOtherYamlDisabledMessage()}</p>`;
+        return;
+      }
+
+      setListLoading(true, 'otherYaml');
+
+      try {
+        const response = await fetch(url('/api/get-backup-other-yaml'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupPath: currentBackupPath })
+        });
+        if (response.status === 404) {
+          itemsList.innerHTML = `<p class="empty-state">${getOtherYamlDisabledMessage()}</p>`;
+          return;
+        }
+        const data = await response.json();
+        const fileNames = data.otherYamlFiles || [];
+        otherYamlFiles = [];
+        otherYamlFileStatuses = {};
+
+        for (const fileName of fileNames) {
+          let status = 'unchanged';
+          try {
+            const liveResp = await fetch(url('/api/get-live-other-yaml-file'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileName, liveConfigPath: haConfig.liveConfigPath })
+            });
+            if (liveResp.ok) {
+              const liveData = await liveResp.json();
+              const backupResp = await fetch(url('/api/get-backup-other-yaml-file'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ backupPath: currentBackupPath, fileName })
+              });
+              const backupData = await backupResp.json();
+              if (backupData.content !== liveData.content) {
+                status = 'changed';
+              }
+            } else {
+              status = 'deleted';
+            }
+          } catch (err) {
+            console.error('Error checking Other YAML file status:', err);
+          }
+          otherYamlFiles.push({ name: fileName, status });
+          otherYamlFileStatuses[fileName] = status;
+        }
+        applyFilters(); // Use applyFilters to apply showOnlyChanges filtering
+      } catch (error) {
+        console.error('[loadOtherYamlFiles] Error:', error);
+        itemsList.innerHTML = `<p class="${otherYamlFeatureEnabled ? 'error' : 'empty-state'}">${otherYamlFeatureEnabled ? applyTextStyle('Error loading Other YAML files: ' + error.message, 'error') : getOtherYamlDisabledMessage()}</p>`;
+      } finally {
+        setListLoading(false, 'otherYaml');
+      }
+    }
+
+    // Render Other YAML files
+    function renderOtherYamlFiles(files) {
+      const itemsList = document.getElementById('itemsList');
+      filteredItemsGlobal = files;
+      itemsList.innerHTML = files.map((file, idx) => {
+        const isSelected = currentItemIndex === idx && activePanel === 'items';
+        const itemStyle = isSelected ? `style="background-color: var(--primary-color); color: white;"` : '';
+        const status = otherYamlFileStatuses[file.name] || '';
+        const statusBadge = status === 'changed' ? `<span class="badge badge-changed">${getStyledText('ui.badges.changed')}</span>` :
+          status === 'deleted' ? `<span class="badge badge-deleted">${getStyledText('ui.badges.deleted')}</span>` : '';
+        return `
+          <div class="list-item ${isSelected ? 'selected' : ''}" data-index="${idx}" ${itemStyle}>
+            <div class="item-content">
+              <span class="dot"></span>
+              <span>${file.name}</span>
+            </div>
+            <div class="item-badges">
+              ${statusBadge}
+              <svg class="chevron" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </div>
+        `;
+      }).join('');
+      document.querySelectorAll('#itemsList .list-item').forEach((item, idx) => {
+        item.addEventListener('click', async () => {
+          const file = files[idx];
+          selectedOtherYamlFile = file;
+          otherYamlBackupContent = '';
+          otherYamlLiveContent = null;
+          try {
+            const backupResp = await fetch(url('/api/get-backup-other-yaml-file'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ backupPath: currentBackupPath, fileName: file.name })
+            });
+            const backupData = await backupResp.json();
+            otherYamlBackupContent = backupData.content;
+            if (file.status !== 'deleted') {
+              const liveResp = await fetch(url('/api/get-live-other-yaml-file'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fileName: file.name, liveConfigPath: haConfig.liveConfigPath })
+              });
+              if (liveResp.ok) {
+                const liveData = await liveResp.json();
+                otherYamlLiveContent = liveData.content;
+              }
+            }
+            showOtherYamlDiffModal();
+          } catch (error) {
+            showNotification('Error loading file: ' + error.message, 'error');
+          }
+        });
+      });
+    }
+
+    // Show Other YAML diff modal
+    function showOtherYamlDiffModal() {
+      const modal = document.getElementById('diffModal');
+      const status = otherYamlFileStatuses[selectedOtherYamlFile.name];
+      const noChanges = otherYamlBackupContent === otherYamlLiveContent;
+
+      document.getElementById('diffTitle').textContent = selectedOtherYamlFile.name;
+
+      const modalBody = document.getElementById('diffModalBody');
+
+      // Hide close button for all states
+      document.getElementById('closeDiff').style.display = 'none';
+
+      if (!otherYamlLiveContent) {
+        // Deleted state
+        document.getElementById('diffSubtitle').innerHTML = `<span>${formatFolderName(currentBackupName, currentBackupMtime)}</span>`;
+        modalBody.innerHTML = `
+          <div class="diff-state-block">
+            <div class="diff-state-banner diff-state-banner-deleted">
+              <span class="diff-state-label">${getStyledText('ui.diffViewer.fileDeleted')}</span>
+            </div>
+            <pre class="code-viewer"><code>${otherYamlBackupContent}</code></pre>
+          </div>
+        `;
+      } else if (noChanges) {
+        // Unchanged state
+        document.getElementById('diffSubtitle').textContent = getStyledText('ui.diffViewer.noChanges');
+        document.getElementById('closeDiff').style.display = 'none';
+        modalBody.innerHTML = `
+          <div class="diff-state-block">
+            <div class="diff-state-banner diff-state-banner-unchanged">
+              <span class="diff-state-label">${getStyledText('ui.diffViewer.currentVersion')}</span>
+            </div>
+            <pre class="code-viewer"><code>${otherYamlBackupContent}</code></pre>
+          </div>
+        `;
+      } else {
+        // Changed state - side by side comparison with diff highlighting
+        document.getElementById('diffSubtitle').textContent = 'Compare backup with current live version.';
+        const backupTimestamp = currentBackupName ? formatFolderName(currentBackupName, currentBackupMtime) : '';
+        const diffHtml = generateDiff(otherYamlLiveContent, otherYamlBackupContent, {
+          leftLabel: getStyledText('ui.diffViewer.liveVersion'),
+          rightLabel: getStyledText('ui.diffViewer.backupVersion'),
+          rightMeta: backupTimestamp,
+          bannerText: formatFolderName(currentBackupName, currentBackupMtime)
+        });
+        modalBody.innerHTML = `
+          ${diffHtml}
+        `;
+      }
+
+      setDiffPalette(currentPalette);
+      modal.style.display = 'flex';
+    }
+
+    // Restore Other YAML file
+    async function restoreOtherYamlFile() {
+      if (!selectedOtherYamlFile) return;
+      if (!otherYamlFeatureEnabled) return;
+      try {
+        const response = await fetch(url('/api/restore-other-yaml-file'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: selectedOtherYamlFile.name, content: otherYamlBackupContent, timezone: getTimezone(), liveConfigPath: haConfig.liveConfigPath })
+        });
+        if (!response.ok) throw new Error('Restore failed');
+        const data = await response.json();
+        document.getElementById('diffModal').style.display = 'none';
+
+        const canReload = data.needsRestart && haConfig && haConfig.haAuthConfigured;
+        if (canReload) {
+          try {
+            const reloadResponse = await fetch(url('/api/reload-home-assistant'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service: 'homeassistant.reload_all' })
+            });
+            if (!reloadResponse.ok) {
+              throw new Error('Reload request failed');
+            }
+            showNotification(getStyledText('notifications.otherYamlReloaded') || 'File restored and Home Assistant reloaded!', 'success');
+          } catch (reloadError) {
+            console.error('[restoreOtherYamlFile] Reload error:', reloadError);
+            showNotification(getStyledText('notifications.otherYamlManualReload') || 'File restored! Reload Home Assistant manually.', 'info');
+          }
+        } else if (data.needsRestart) {
+          showNotification(getStyledText('notifications.otherYamlManualReload') || 'File restored! Reload Home Assistant manually.', 'info');
+        } else {
+          showNotification(getStyledText('notifications.otherYamlRestored') || 'File restored!', 'success');
+        }
+        await loadOtherYamlFiles();
+      } catch (error) {
+        console.error('[restoreOtherYamlFile] Error:', error);
+        showNotification(getStyledText('notifications.errorGeneric', { error: error.message }) || ('Error restoring file: ' + error.message), 'error');
+      }
+    }
+
     // Update restore button for Lovelace
     document.getElementById('restoreBtn').addEventListener('click', () => {
       if (currentMode === 'lovelace') {
@@ -2157,6 +2419,8 @@
         restoreEsphomeFile();
       } else if (currentMode === 'packages' && packagesFeatureEnabled) {
         restorePackagesFile();
+      } else if (currentMode === 'otherYaml' && otherYamlFeatureEnabled) {
+        restoreOtherYamlFile();
       } else {
         restoreItem();
       }
@@ -2175,6 +2439,11 @@
 
         if (newMode === 'packages' && !packagesFeatureEnabled) {
           showNotification(getPackagesDisabledMessage(), 'info');
+          return;
+        }
+
+        if (newMode === 'otherYaml' && !otherYamlFeatureEnabled) {
+          showNotification(getOtherYamlDisabledMessage(), 'info');
           return;
         }
 
@@ -2408,7 +2677,8 @@
               backupFolderPath,
               theme: currentTheme,
               esphomeEnabled: esphomeFeatureEnabled,
-              packagesEnabled: packagesFeatureEnabled
+              packagesEnabled: packagesFeatureEnabled,
+              otherYamlEnabled: otherYamlFeatureEnabled
             })
           });
           console.log('[save-settings] Save response ok:', response.ok, 'status:', response.status);
@@ -3229,6 +3499,8 @@
             } else if (currentMode === 'esphome') {
               document.querySelectorAll('#itemsList .list-item')[currentItemIndex].click();
             } else if (currentMode === 'packages') {
+              document.querySelectorAll('#itemsList .list-item')[currentItemIndex].click();
+            } else if (currentMode === 'otherYaml') {
               document.querySelectorAll('#itemsList .list-item')[currentItemIndex].click();
             } else {
               showDiffViewer(item);
